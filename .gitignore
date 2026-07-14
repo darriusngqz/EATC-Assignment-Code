@@ -1,0 +1,16 @@
+venv/
+__pycache__/
+*.pyc
+models/mlp_comparison.keras
+.pytest_cache/
+.DS_Store
+.ipynb_checkpoints/
+
+# Office lock files (created while a Word/Excel/PowerPoint file is open,
+# not real content, should never be committed)
+~$*
+
+# Ad-hoc test-run outputs regenerated locally, not part of the project
+benign_scan_results.csv
+labeled_test_results.csv
+batch_results.csv

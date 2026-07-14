@@ -1,0 +1,5 @@
+-r requirements.txt
+tensorflow==2.21.0
+pytest==9.1.1
+matplotlib==3.11.0
+notebook==7.5.1
