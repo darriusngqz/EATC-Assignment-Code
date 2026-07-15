@@ -29,7 +29,7 @@ import streamlit as st
 from explain import build_explainer, explain_prediction
 from extract_features import extract_pe_features
 
-MAX_UPLOAD_MB = 20
+MAX_UPLOAD_MB = 100
 MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "classical_pipeline.joblib")
 # data/dataset_pe_v2_full.csv (129MB) is gitignored, too large for a normal
 # git push (GitHub rejects any single file over 100MB) and never present on
