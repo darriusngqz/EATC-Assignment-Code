@@ -14,3 +14,7 @@ models/mlp_comparison.keras
 benign_scan_results.csv
 labeled_test_results.csv
 batch_results.csv
+
+# Streamlit secrets (VirusTotal API key). Never commit the real file, only
+# .streamlit/secrets.toml.example (a template with no real key) is tracked.
+.streamlit/secrets.toml

@@ -95,18 +95,40 @@ false-positive rate against `C:\Windows\System32` is measured and reported
 honestly in Section 5 below, not adjusted by changing training data or the
 decision threshold to hit a target number.
 
-**NSRL hash verification (Upload tab only).** After a file is uploaded, its
-SHA-256 hash is checked against CIRCL's `hashlookup.circl.lu`, a free public
-API run by Luxembourg's national CERT that queries NIST's National Software
-Reference Library (NSRL) and a few other legitimate software sources live.
-A match overrides the verdict to benign, with the model's own prediction
-still shown alongside it for transparency; no match, or the service being
-unreachable, falls through to the model's own verdict unchanged. This is a
-separate, independent detection layer, it does not touch the training data,
-features, or model in any way, and requires internet access at runtime. It
-only applies to the Upload tab: the "Try a sample" and "Batch CSV" tabs work
-from already-extracted numeric features, there is no original file left to
-hash. See `app.py`'s `check_nsrl_hash` for the implementation.
+**NSRL hash verification and VirusTotal (Upload tab only).** The model's own
+verdict is always the primary result, these two checks exist to help spot a
+false positive or false negative, not to replace the model's judgement.
+
+After a file is uploaded, its SHA-256 hash is checked against CIRCL's
+`hashlookup.circl.lu`, a free public API run by Luxembourg's national CERT
+that queries NIST's National Software Reference Library (NSRL) live. CIRCL
+also aggregates known-malware hash lists (e.g. malshare.com) in the same
+lookup, so a match is read two ways: a genuine NSRL record overrides the
+verdict to benign, a `KnownMalicious` record overrides it to malicious. A
+match to neither, no match at all, or the service being unreachable, all
+fall through to the model's own verdict unchanged. The model's own
+prediction is always shown alongside for transparency, even when overridden.
+
+VirusTotal is checked separately and never overrides anything, purely
+informational: it shows the multi-engine detection ratio (e.g. "2/71 engines
+flag this as malicious") next to the verdict. If it disagrees with the final
+verdict, a note explains this is an expected limitation of static-only
+analysis, not proof either result is wrong, and prompts a closer look rather
+than auto-correcting. This design is deliberate: malware authors routinely
+test samples against VirusTotal and iterate until detection is low, so
+treating a low detection count as proof of safety would mean trusting
+exactly the signal attackers optimise around, defeating the purpose of a
+model built to catch what signature-based antivirus misses. VirusTotal is
+optional, it only runs if `VIRUSTOTAL_API_KEY` is set in
+`.streamlit/secrets.toml` (see `.streamlit/secrets.toml.example`), get a
+free key yourself at virustotal.com/gui/join-us, silently skipped otherwise.
+
+Both checks require internet access at runtime and are separate, independent
+detection layers, neither touches the training data, features, or model in
+any way. Both only apply to the Upload tab: the "Try a sample" and "Batch
+CSV" tabs work from already-extracted numeric features, there is no original
+file left to hash. See `app.py`'s `check_nsrl_hash` and `check_virustotal`
+for the implementation.
 
 ## 4. Run the tests
 
@@ -124,17 +146,24 @@ dataset or the production model file. Both only depend on `constants.py` and
 ## 5. Validate against real files and report the result honestly (run locally, in `07_real_world_validation.ipynb`)
 
 `07_real_world_validation.ipynb` documents, but cannot execute in every
-environment, three checks that need real `.exe`/`.dll` files on disk:
+environment, two checks that need real `.exe`/`.dll` files on disk (each a
+plain sequence of cells, not a wrapper function):
 
 - **Scan a folder assumed all-legitimate** (e.g. `C:\Windows\System32`) and
-  report the false-positive rate, using `scan_folder()`.
-- **Score known-malicious and known-benign folders** for real
-  accuracy/precision/recall, using `evaluate_labeled_folders()`.
-- **Explain any false positives with SHAP**, using `explain_false_positives()`.
+  report the false-positive rate.
+- **Explain any false positives with SHAP**, reading each one against
+  per-feature training averages.
 
-Manual testing found the model trained on `CORE_TRAITS`, on the original,
-unaugmented `dataset_malwares.csv`, flagged around 90% of genuine
-`C:\Windows\System32` files as malicious, far too high to be usable in
+A third check, scoring known-malicious and known-benign folders for real
+accuracy/precision/recall, was deliberately left out: it needs real malware
+samples handled in a properly isolated environment, which this project does
+not have safe access to, using placeholder or improvised "malicious" files
+for that number would be worse than not having it.
+
+Real local testing (200 files under `C:\Windows\System32`) found the model
+trained on `CORE_TRAITS`, on the original, unaugmented `dataset_malwares.csv`,
+flagged 90.5% of genuine `C:\Windows\System32` files as malicious, far too high
+to be usable in
 practice. An earlier version of this project responded to that finding by
 adding real legitimate files into the training data (`augment_with_real_benign_files()`,
 producing a file called `dataset_augmented.csv`), which did bring the
@@ -165,15 +194,30 @@ project report's limitations section for the full discussion.
 
 As a genuinely different kind of mitigation, not a substitute for the future
 work above, `app.py`'s Upload tab also checks an uploaded file's hash against
-NIST's NSRL via the CIRCL `hashlookup` API (see Section 3). This is
+NIST's NSRL via the CIRCL `hashlookup` API, and optionally shows a
+VirusTotal detection ratio for context (see Section 3). This is
 architecturally distinct from changing the training data or model: it adds
-an independent, external, industry-standard detection layer on top of an
+independent, external, industry-standard detection layers on top of an
 honestly-evaluated model, the same way real antivirus/EDR products combine
-static analysis with signature/hash matching as separate layers. It does not
-fix the underlying dataset shift, and only ever applies to files that are
-actually uploaded (not the pre-extracted `dataset_test.csv` rows), but it
-reduces false positives specifically on files NSRL already recognises as
-legitimate.
+static analysis with signature/hash matching and multi-engine reputation as
+separate layers, rather than tuning any one of them to agree with the
+others. It does not fix the underlying dataset shift, and only ever applies
+to files that are actually uploaded (not the pre-extracted `dataset_test.csv`
+rows), but it reduces false positives (and catches confirmed malware) on
+files an independent source already has an opinion on. VirusTotal
+specifically never overrides the model, both because a low detection count
+isn't proof of safety, and because malware authors test against VirusTotal
+specifically to find variants with low detection, so trusting that signal
+blindly would undermine a model built to catch what signature-based
+antivirus misses.
+
+Real-world testing during development, using files actually downloaded
+locally rather than the training/test CSVs, found NSRL's practical hit rate
+lower than expected: a Windows System32 DLL, a Spotify installer, and a
+7-Zip installer all returned no match. This is expected, not a defect, NSRL
+only contains hashes someone specifically submitted, and frequently-updated
+or vendor-unsubmitted software often isn't covered, but it is worth stating
+honestly here rather than overselling the check's real-world coverage.
 
 ## 6. Deploy to Streamlit Community Cloud
 
@@ -251,16 +295,17 @@ and ROC-AUC numbers, and the model files they save
 trusted. Each notebook's Summary cell has a `TODO` marking exactly what to
 fill in after that re-run.
 
-The last recorded real-world measurement for this unaugmented `CORE_TRAITS`
-model was around 90% of genuine `C:\Windows\System32` files flagged
+Confirmed via a real local run of `07_real_world_validation.ipynb`'s Check 1
+(200 files scanned under `C:\Windows\System32`, 0 unparseable): this
+unaugmented `CORE_TRAITS` model flagged 90.5% (181/200) of genuine files as
 malicious, at the standard 0.5 decision threshold `app.py` uses. This is
 reported here honestly as a dataset shift finding (the training data's
 benign class does not structurally resemble typical Windows system files),
 not as something this project tries to fix by reshaping the training data
-further, per Section 5's reasoning. Re-run the real-world scan in
-`07_real_world_validation.ipynb` locally once `04`-`06` have been freshly
-re-run, and report whatever false-positive rate you find honestly alongside
-the validation-set numbers, not instead of them.
+further, per Section 5's reasoning. If `04`-`06` are re-run and the model
+changes, re-run the real-world scan again and report whatever false-positive
+rate is found honestly alongside the validation-set numbers, not instead of
+them.
 
 The 24 "derived" features (`SuspiciousImportFunctions`,
 `SuspiciousNameSection`, the `Section*` min/max stats, `SectionMainChar`,

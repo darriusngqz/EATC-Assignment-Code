@@ -37,18 +37,40 @@ MALICIOUS_THRESHOLD = 0.5
 
 # CIRCL hashlookup (hashlookup.circl.lu) is a free public API run by
 # Luxembourg's national CERT. It queries NIST's National Software Reference
-# Library (NSRL) and a few other legitimate software sources live, no local
-# copy of the database is stored or shipped with this project. This is a
+# Library (NSRL) and a few other sources live, no local copy of the database
+# is stored or shipped with this project, and it also includes known-malware
+# hash lists (e.g. malshare.com), not just legitimate software. This is a
 # separate, independent verification layer: it does not touch the training
 # data, features, or model in any way, it only checks an uploaded file's
-# SHA-256 hash against an external, independently maintained list of
-# known-legitimate files. It is best-effort with no uptime guarantee, so a
-# failed request must fall back to the model's own verdict, never crash the
-# app. This only works on the Upload tab, where the original file's bytes
-# exist. The Try a Sample and Batch CSV tabs only ever have pre-extracted
-# numeric features, there is no original file left to hash.
+# SHA-256 hash against external, independently maintained hash lists. It is
+# best-effort with no uptime guarantee, so a failed request must fall back
+# to the model's own verdict, never crash the app. This only works on the
+# Upload tab, where the original file's bytes exist. The Try a Sample and
+# Batch CSV tabs only ever have pre-extracted numeric features, there is no
+# original file left to hash.
 HASHLOOKUP_URL = "https://hashlookup.circl.lu/lookup/sha256/"
 HASHLOOKUP_TIMEOUT = 5
+
+# VirusTotal is used purely as a second, informational data point, never to
+# override the model's own verdict. The model's own evaluation is the whole
+# point of this project; VirusTotal's multi-engine detection ratio is shown
+# alongside it so a false positive or false negative is easier to spot, not
+# used to silently "correct" the model. This also avoids a real security
+# problem: malware authors routinely test their samples against VirusTotal
+# and iterate until detection is low, so treating "few detections" as proof
+# of safety would be trusting exactly the signal attackers optimise against,
+# and would defeat the purpose of a model built to catch what signature-based
+# antivirus misses. Optional: only runs if VIRUSTOTAL_API_KEY is set in
+# .streamlit/secrets.toml (see .streamlit/secrets.toml.example), silently
+# skipped otherwise. Get a free key at virustotal.com/gui/join-us yourself,
+# this project does not and should not create that account for you.
+VIRUSTOTAL_URL = "https://www.virustotal.com/api/v3/files/"
+VIRUSTOTAL_TIMEOUT = 8
+# A single overly-aggressive heuristic engine flagging a clean file is a
+# known VirusTotal noise source; requiring at least 3 engines to agree before
+# treating it as "VirusTotal flags this" filters that noise without hiding a
+# genuine, broadly-recognised detection.
+VIRUSTOTAL_FLAG_THRESHOLD = 3
 
 
 # Loads the trained model once and caches it. Needed because Streamlit
@@ -74,21 +96,77 @@ def load_demo_files():
     return pd.read_csv(DEMO_FILES_PATH)
 
 
-# Looks up a file's SHA-256 against CIRCL's hashlookup service. Returns the
-# matched file's name on a hit, None on a confirmed no-match (HTTP 404), or
-# the string "unavailable" if the service could not be reached, so callers
-# can tell "checked, no match" apart from "couldn't check."
+# Looks up a file's SHA-256 against CIRCL's hashlookup service. CIRCL
+# aggregates both known-legitimate sources (NSRL) and known-malware sources
+# (e.g. malshare.com) in the same lookup, so a raw HTTP 200 alone does not
+# tell you which kind of match it is, that distinction has to be read out of
+# the response body. Returns a (status, detail) tuple:
+#   ("malicious", <source>)  - matched a known-malicious hash list
+#   ("benign", <file name>)  - matched a genuine NSRL legitimate-software record
+#   (None, None)             - confirmed no match (HTTP 404)
+#   ("unavailable", None)    - request failed, or a match came from a source
+#                               this project doesn't treat as a verified
+#                               legitimate-software list (conservative: only
+#                               NSRL counts as a benign override)
 def check_nsrl_hash(file_bytes):
     sha256 = hashlib.sha256(file_bytes).hexdigest()
     try:
         response = requests.get(f"{HASHLOOKUP_URL}{sha256}", timeout=HASHLOOKUP_TIMEOUT)
     except requests.RequestException:
-        return "unavailable"
-    if response.status_code == 200:
-        return response.json().get("FileName", "known file")
+        return "unavailable", None
     if response.status_code == 404:
+        return None, None
+    if response.status_code != 200:
+        return "unavailable", None
+    data = response.json()
+    if "KnownMalicious" in data:
+        return "malicious", data.get("KnownMalicious", "a known-malicious hash source")
+    if data.get("source") == "NSRL":
+        return "benign", data.get("FileName", "known file")
+    # Matched something in CIRCL's index that is neither NSRL nor flagged
+    # malicious (e.g. a Linux package repository entry). Not enough to call
+    # a Windows PE file verified-legitimate, so treat it as inconclusive
+    # rather than guessing.
+    return "unavailable", None
+
+
+# Looks up a file's SHA-256 on VirusTotal for its multi-engine detection
+# count. Purely informational, this never changes any verdict, see the
+# VIRUSTOTAL_URL comment above for why. Returns a dict with "malicious" and
+# "total" engine counts on success, or None if no API key is configured, the
+# file isn't in VirusTotal's database yet, or the request failed for any
+# reason, callers should just skip showing anything in that case.
+def check_virustotal(file_bytes):
+    try:
+        api_key = st.secrets.get("VIRUSTOTAL_API_KEY")
+    except Exception:
+        api_key = None
+    if not api_key:
         return None
-    return "unavailable"
+    sha256 = hashlib.sha256(file_bytes).hexdigest()
+    try:
+        response = requests.get(
+            f"{VIRUSTOTAL_URL}{sha256}",
+            headers={"x-apikey": api_key},
+            timeout=VIRUSTOTAL_TIMEOUT,
+        )
+    except requests.RequestException:
+        return None
+    if response.status_code != 200:
+        return None
+    stats = (
+        response.json()
+        .get("data", {})
+        .get("attributes", {})
+        .get("last_analysis_stats", {})
+    )
+    if not stats:
+        return None
+    malicious = stats.get("malicious", 0) + stats.get("suspicious", 0)
+    total = sum(stats.values())
+    if total == 0:
+        return None
+    return {"malicious": malicious, "total": total}
 
 
 # Shows the malicious/benign verdict, confidence, and SHAP explanation for
@@ -164,10 +242,34 @@ def main():
                         "Likely malicious" if proba_malicious >= MALICIOUS_THRESHOLD
                         else "Likely benign"
                     )
-                    nsrl_match = check_nsrl_hash(file_bytes)
+                    model_confidence = (
+                        proba_malicious if model_verdict == "Likely malicious"
+                        else 1 - proba_malicious
+                    )
 
-                    if nsrl_match and nsrl_match != "unavailable":
-                        st.success(f"Likely benign - verified via NSRL (matched known file: {nsrl_match})")
+                    # The model's own verdict is always the primary result.
+                    # NSRL can override it in either direction (a verified
+                    # identity match is strong evidence); VirusTotal, added
+                    # below, never overrides anything, only adds context.
+                    nsrl_status, nsrl_detail = check_nsrl_hash(file_bytes)
+                    final_says_malicious = model_verdict == "Likely malicious"
+
+                    if nsrl_status == "malicious":
+                        final_says_malicious = True
+                        st.error(f"Likely malicious - flagged as a known-malicious file (source: {nsrl_detail})")
+                        st.caption(
+                            "This file's SHA-256 hash matched a known-malicious hash "
+                            "in an independent reference database, not something this "
+                            "project built or curated. This overrides the model's own "
+                            "verdict for this file."
+                        )
+                        st.caption(
+                            f"Model's own prediction, shown for transparency: "
+                            f"{model_verdict} - confidence {model_confidence:.0%}"
+                        )
+                    elif nsrl_status == "benign":
+                        final_says_malicious = False
+                        st.success(f"Likely benign - verified via NSRL (matched known file: {nsrl_detail})")
                         st.caption(
                             "This file's SHA-256 hash matched a known-legitimate entry "
                             "in NIST's National Software Reference Library (via CIRCL "
@@ -175,24 +277,43 @@ def main():
                             "project did not build or curate. This overrides the "
                             "model's own verdict for this file."
                         )
-                        model_confidence = (
-                            proba_malicious if model_verdict == "Likely malicious"
-                            else 1 - proba_malicious
-                        )
                         st.caption(
                             f"Model's own prediction, shown for transparency: "
                             f"{model_verdict} - confidence {model_confidence:.0%}"
                         )
                     else:
-                        if nsrl_match == "unavailable":
+                        if nsrl_status == "unavailable":
                             st.caption(
-                                "NSRL reference check unavailable right now "
-                                "(request failed or timed out). Showing the model's "
-                                "own verdict only."
+                                "NSRL reference check unavailable or inconclusive "
+                                "right now. Showing the model's own verdict only."
                             )
                         else:
                             st.caption("No match found in the NSRL reference database.")
                         render_verdict(pipeline, explainer, feature_order, row_df, proba_malicious)
+
+                    # VirusTotal: informational only, shown after everything
+                    # above, never changes final_says_malicious.
+                    vt_result = check_virustotal(file_bytes)
+                    if vt_result is not None:
+                        st.divider()
+                        st.caption(
+                            f"VirusTotal (informational only, does not change the "
+                            f"verdict above): {vt_result['malicious']}/{vt_result['total']} "
+                            f"engines flag this file as malicious."
+                        )
+                        vt_says_malicious = vt_result["malicious"] >= VIRUSTOTAL_FLAG_THRESHOLD
+                        if final_says_malicious != vt_says_malicious:
+                            st.info(
+                                "This verdict and VirusTotal's result disagree, worth "
+                                "a closer look before treating either as final. This "
+                                "is a known, expected limitation of static PE header "
+                                "analysis on its own, real-world antivirus/EDR tools "
+                                "combine several detection methods (static analysis, "
+                                "signatures, behavioural monitoring) precisely because "
+                                "no single method always agrees with every other. "
+                                "Disagreement here doesn't automatically mean either "
+                                "verdict is wrong."
+                            )
 
     with tab_sample:
         # Pick from pre-loaded real files, for a live demo without needing
