@@ -10,3 +10,5 @@ pefile==2024.8.26
 pandas==3.0.3
 numpy==2.4.6
 joblib==1.5.3
+# Used for the NSRL hash-lookup call in app.py (CIRCL hashlookup API).
+requests==2.34.2

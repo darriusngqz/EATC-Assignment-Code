@@ -10,11 +10,13 @@ Run locally with: streamlit run app.py
 """
 import sys
 import os
+import hashlib
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "src"))
 
 import joblib
 import pandas as pd
+import requests
 import streamlit as st
 
 from explain import build_explainer, explain_prediction
@@ -32,6 +34,21 @@ DEMO_FILES_PATH = os.path.join(os.path.dirname(__file__), "data", "dataset_test.
 # dataset shift finding, not something engineered away by reshaping the
 # training data.
 MALICIOUS_THRESHOLD = 0.5
+
+# CIRCL hashlookup (hashlookup.circl.lu) is a free public API run by
+# Luxembourg's national CERT. It queries NIST's National Software Reference
+# Library (NSRL) and a few other legitimate software sources live, no local
+# copy of the database is stored or shipped with this project. This is a
+# separate, independent verification layer: it does not touch the training
+# data, features, or model in any way, it only checks an uploaded file's
+# SHA-256 hash against an external, independently maintained list of
+# known-legitimate files. It is best-effort with no uptime guarantee, so a
+# failed request must fall back to the model's own verdict, never crash the
+# app. This only works on the Upload tab, where the original file's bytes
+# exist. The Try a Sample and Batch CSV tabs only ever have pre-extracted
+# numeric features, there is no original file left to hash.
+HASHLOOKUP_URL = "https://hashlookup.circl.lu/lookup/sha256/"
+HASHLOOKUP_TIMEOUT = 5
 
 
 # Loads the trained model once and caches it. Needed because Streamlit
@@ -57,11 +74,30 @@ def load_demo_files():
     return pd.read_csv(DEMO_FILES_PATH)
 
 
+# Looks up a file's SHA-256 against CIRCL's hashlookup service. Returns the
+# matched file's name on a hit, None on a confirmed no-match (HTTP 404), or
+# the string "unavailable" if the service could not be reached, so callers
+# can tell "checked, no match" apart from "couldn't check."
+def check_nsrl_hash(file_bytes):
+    sha256 = hashlib.sha256(file_bytes).hexdigest()
+    try:
+        response = requests.get(f"{HASHLOOKUP_URL}{sha256}", timeout=HASHLOOKUP_TIMEOUT)
+    except requests.RequestException:
+        return "unavailable"
+    if response.status_code == 200:
+        return response.json().get("FileName", "known file")
+    if response.status_code == 404:
+        return None
+    return "unavailable"
+
+
 # Shows the malicious/benign verdict, confidence, and SHAP explanation for
 # one row of features. Shared by the Upload and Try a Sample tabs so both
-# display results identically.
-def render_verdict(pipeline, explainer, feature_order, row_df):
-    proba_malicious = pipeline.predict_proba(row_df)[0][1]
+# display results identically. proba_malicious can be passed in if already
+# computed, to avoid scoring the same row twice.
+def render_verdict(pipeline, explainer, feature_order, row_df, proba_malicious=None):
+    if proba_malicious is None:
+        proba_malicious = pipeline.predict_proba(row_df)[0][1]
     verdict = "Likely malicious" if proba_malicious >= MALICIOUS_THRESHOLD else "Likely benign"
 
     if verdict == "Likely malicious":
@@ -111,10 +147,11 @@ def main():
             if uploaded.size > MAX_UPLOAD_MB * 1024 * 1024:
                 st.error(f"File too large (limit {MAX_UPLOAD_MB} MB).")
             else:
+                file_bytes = uploaded.read()
                 try:
                     # Raises on anything that isn't a real, parseable PE
                     # file; caught so a bad upload shows a message, not a crash.
-                    row = extract_pe_features(uploaded.read(), feature_order)
+                    row = extract_pe_features(file_bytes, feature_order)
                 except Exception:
                     st.error(
                         "This does not look like a valid PE file, or it "
@@ -122,7 +159,40 @@ def main():
                     )
                 else:
                     row_df = pd.DataFrame([row], columns=feature_order)
-                    render_verdict(pipeline, explainer, feature_order, row_df)
+                    proba_malicious = pipeline.predict_proba(row_df)[0][1]
+                    model_verdict = (
+                        "Likely malicious" if proba_malicious >= MALICIOUS_THRESHOLD
+                        else "Likely benign"
+                    )
+                    nsrl_match = check_nsrl_hash(file_bytes)
+
+                    if nsrl_match and nsrl_match != "unavailable":
+                        st.success(f"Likely benign - verified via NSRL (matched known file: {nsrl_match})")
+                        st.caption(
+                            "This file's SHA-256 hash matched a known-legitimate entry "
+                            "in NIST's National Software Reference Library (via CIRCL "
+                            "hashlookup), an independent reference database this "
+                            "project did not build or curate. This overrides the "
+                            "model's own verdict for this file."
+                        )
+                        model_confidence = (
+                            proba_malicious if model_verdict == "Likely malicious"
+                            else 1 - proba_malicious
+                        )
+                        st.caption(
+                            f"Model's own prediction, shown for transparency: "
+                            f"{model_verdict} - confidence {model_confidence:.0%}"
+                        )
+                    else:
+                        if nsrl_match == "unavailable":
+                            st.caption(
+                                "NSRL reference check unavailable right now "
+                                "(request failed or timed out). Showing the model's "
+                                "own verdict only."
+                            )
+                        else:
+                            st.caption("No match found in the NSRL reference database.")
+                        render_verdict(pipeline, explainer, feature_order, row_df, proba_malicious)
 
     with tab_sample:
         # Pick from pre-loaded real files, for a live demo without needing

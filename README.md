@@ -95,6 +95,19 @@ false-positive rate against `C:\Windows\System32` is measured and reported
 honestly in Section 5 below, not adjusted by changing training data or the
 decision threshold to hit a target number.
 
+**NSRL hash verification (Upload tab only).** After a file is uploaded, its
+SHA-256 hash is checked against CIRCL's `hashlookup.circl.lu`, a free public
+API run by Luxembourg's national CERT that queries NIST's National Software
+Reference Library (NSRL) and a few other legitimate software sources live.
+A match overrides the verdict to benign, with the model's own prediction
+still shown alongside it for transparency; no match, or the service being
+unreachable, falls through to the model's own verdict unchanged. This is a
+separate, independent detection layer, it does not touch the training data,
+features, or model in any way, and requires internet access at runtime. It
+only applies to the Upload tab: the "Try a sample" and "Batch CSV" tabs work
+from already-extracted numeric features, there is no original file left to
+hash. See `app.py`'s `check_nsrl_hash` for the implementation.
+
 ## 4. Run the tests
 
 ```bash
@@ -149,6 +162,18 @@ collection phase to build a training set that actually represents typical
 deployed software, carried out as its own deliberate project phase rather
 than a reactive patch. See `07_real_world_validation.ipynb`'s Summary and the
 project report's limitations section for the full discussion.
+
+As a genuinely different kind of mitigation, not a substitute for the future
+work above, `app.py`'s Upload tab also checks an uploaded file's hash against
+NIST's NSRL via the CIRCL `hashlookup` API (see Section 3). This is
+architecturally distinct from changing the training data or model: it adds
+an independent, external, industry-standard detection layer on top of an
+honestly-evaluated model, the same way real antivirus/EDR products combine
+static analysis with signature/hash matching as separate layers. It does not
+fix the underlying dataset shift, and only ever applies to files that are
+actually uploaded (not the pre-extracted `dataset_test.csv` rows), but it
+reduces false positives specifically on files NSRL already recognises as
+legitimate.
 
 ## 6. Deploy to Streamlit Community Cloud
 
