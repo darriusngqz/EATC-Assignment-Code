@@ -1,8 +1,8 @@
-# Caps Streamlit's file_uploader widget at the same 100MB app.py already
+# Caps Streamlit's file_uploader widget at the same 200MB app.py already
 # enforces in code (MAX_UPLOAD_MB in app.py). Without this, the widget
 # shows Streamlit's default 200MB limit and lets a user upload a large
 # file in full before app.py's own post-upload size check rejects it,
 # wasted time/bandwidth for a limit the UI never actually advertised.
 # Keep this value in sync with MAX_UPLOAD_MB in app.py if either changes.
 [server]
-maxUploadSize = 100
+maxUploadSize = 200
