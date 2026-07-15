@@ -18,3 +18,31 @@ batch_results.csv
 # Streamlit secrets (VirusTotal API key). Never commit the real file, only
 # .streamlit/secrets.toml.example (a template with no real key) is tracked.
 .streamlit/secrets.toml
+
+# --- v2 additions ---
+
+# Raw EMBER2018 download (1.6GB+ tar/tar.bz2), never meant to be committed,
+# regenerate data/dataset_pe_v2_full.csv from it via the data-build step
+# documented in README.md if needed again.
+ember_dataset_2018_2.tar.bz2
+ember_dataset_2018_2.tar/
+
+# Large derived v2 CSV (129MB), regenerable from the EMBER tar via
+# data_pipeline/build_dataset.py, not meant to be committed. Only the
+# trained model file (models/classical_pipeline.joblib, tracked, see
+# below) needs to be in the repo for Streamlit Cloud to deploy, it does
+# not run notebooks. No separate train/val/test split files exist, every
+# notebook that needs a split (04/05/06) derives the identical rows
+# inline from this one file using a fixed RANDOM_STATE.
+data/dataset_pe_v2_full.csv
+
+# Intermediate v2 model candidates from 04/05 (comparison-only, not what
+# app.py loads). Only models/classical_pipeline.joblib is the deployed
+# artifact and needs to stay tracked.
+models/rf_v2.joblib
+models/xgb_v2.joblib
+models/lgbm_v2.joblib
+models/mlp_v2.keras
+models/mlp_v2_scaler.joblib
+models/deployed_mlp_v2.keras
+models/deployed_mlp_v2_scaler.joblib

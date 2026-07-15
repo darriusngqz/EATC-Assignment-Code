@@ -1,85 +1,92 @@
 """
-constants.py defines the shared variables this project depends on: the
-77 feature (numeric) columns and their order, the label definition, and
-the different feature-set groupings built from them. The full dataset has
-79 columns in total (77 features, 1 Name, and 1 Malware binary column). This
-file ensures the columns used to train the model are the exact same
-columns, in the exact same order, that the live app and model use to
-make a prediction.
+constants.py defines the shared variables the v2 pipeline depends on: the
+20 feature columns (in order), the label definition, and the standard
+lists used to derive suspicious-import and suspicious-section signals.
+This file ensures the columns used to train the model are the exact same
+columns, in the exact same order, that the live app uses to make a
+prediction. See src/extract_features.py for how each one is computed from
+a real uploaded file, and data_pipeline/build_dataset.py for how each one
+is computed from EMBER's raw JSON at training-data-build time (same logic,
+different input shape).
+
+Why these 20 and not the old 10: the v1 model (legacy_v1/) used only 10
+section-derived features. Real-world testing (legacy_v1/notebooks/07)
+found this model flagged ~90% of genuine Windows System32 files as
+malicious. Two contributing causes were identified: the v1 training data
+(a fixed ~19,600-row academic CSV) did not represent typical real-world
+software well, and 10 features gave the model little to work with beyond
+section-entropy shortcuts. v2 addresses both: EMBER2018 (VirusTotal-sourced,
+real-world software) replaces the training data, and the feature set is
+widened to include import richness and string-based signals, both
+well-established, non-file-type-identifying malware signals. Deliberately
+still excludes raw header fields (Machine, Characteristics, Subsystem, ...)
+that structurally separate DLLs from EXEs rather than malicious from
+benign, that was the original shortcut-learning trap legacy_v1/notebooks/
+03_eda.ipynb caught and this project does not want to reintroduce it.
 """
 
-# The 77 numeric feature columns, in the exact order the model expects.
+# The 20 behavioural feature columns, in the exact order the model expects.
 ORDER_OF_FEATURES = [
-    # IMAGE_DOS_HEADER (MS-DOS stub header, 17 raw fields)
-    "e_magic", "e_cblp", "e_cp", "e_crlc", "e_cparhdr", "e_minalloc", "e_maxalloc",
-    "e_ss", "e_sp", "e_csum", "e_ip", "e_cs", "e_lfarlc", "e_ovno", "e_oemid",
-    "e_oeminfo", "e_lfanew",
-    # IMAGE_FILE_HEADER (COFF header, 7 raw fields)
-    "Machine", "NumberOfSections", "TimeDateStamp", "PointerToSymbolTable",
-    "NumberOfSymbols", "SizeOfOptionalHeader", "Characteristics",
-    # IMAGE_OPTIONAL_HEADER (28 raw fields)
-    "Magic", "MajorLinkerVersion", "MinorLinkerVersion", "SizeOfCode",
-    "SizeOfInitializedData", "SizeOfUninitializedData", "AddressOfEntryPoint",
-    "BaseOfCode", "ImageBase", "SectionAlignment", "FileAlignment",
-    "MajorOperatingSystemVersion", "MinorOperatingSystemVersion", "MajorImageVersion",
-    "MinorImageVersion", "MajorSubsystemVersion", "MinorSubsystemVersion",
-    "SizeOfHeaders", "CheckSum", "SizeOfImage", "Subsystem", "DllCharacteristics",
-    "SizeOfStackReserve", "SizeOfStackCommit", "SizeOfHeapReserve", "SizeOfHeapCommit",
-    "LoaderFlags", "NumberOfRvaAndSizes",
-    # Derived / engineered features (25 fields)
+    # Section table stats (packing/entropy signal, same spirit as v1's
+    # CORE_TRAITS, kept because they were validated to carry genuine signal,
+    # not just a DLL/EXE shortcut, in legacy_v1/notebooks/03_eda.ipynb)
     "SuspiciousImportFunctions", "SuspiciousNameSection", "SectionsLength",
     "SectionMinEntropy", "SectionMaxEntropy", "SectionMinRawsize", "SectionMaxRawsize",
-    "SectionMinVirtualsize", "SectionMaxVirtualsize", "SectionMaxPhysical",
-    "SectionMinPhysical", "SectionMaxVirtual", "SectionMinVirtual",
-    "SectionMaxPointerData", "SectionMinPointerData", "SectionMaxChar", "SectionMainChar",
-    "DirectoryEntryImport", "DirectoryEntryImportSize", "DirectoryEntryExport",
-    "ImageDirectoryEntryExport", "ImageDirectoryEntryImport", "ImageDirectoryEntryResource",
-    "ImageDirectoryEntryException", "ImageDirectoryEntrySecurity",
+    "SectionMinVirtualsize", "SectionMaxVirtualsize",
+    # Import richness (new: v1 only counted suspicious-function hits, not
+    # overall import volume, so a file with 0 suspicious hits but almost no
+    # imports at all, common in packed/obfuscated malware, was invisible)
+    "DirectoryEntryImport", "NumberOfImportedFunctions",
+    # String-based signals (new category entirely; EMBER's own feature
+    # extraction defines a "string" as 5+ consecutive printable characters,
+    # matched here so training and inference compute this identically)
+    "NumStrings", "StringEntropy", "AvgStringLength",
+    "NumURLs", "NumRegistryKeys", "NumPaths", "NumMZStrings",
+    # Overall size (packers/droppers often show a large raw-vs-virtual-size
+    # mismatch; this is file-content-derived, not a file-type flag)
+    "FileSize", "VirtualSize",
 ]
 
-# Defines the name of the malware.
-ID_COLUMNS = ["Name"]
+# Defines normal section names for a legitimate Windows PE file. Any
+# section name not listed here adds one signal of possible malware.
+# Unchanged from legacy_v1, this list was already correct.
+STANDARD_SECTION_NAMES = {
+    ".text", ".data", ".rdata", ".idata", ".edata", ".pdata", ".rsrc",
+    ".reloc", ".bss", ".crt", ".tls", ".debug", ".didat", ".apiset", "fothk",
+}
 
-# Binary column that defines whether the sample is malicious or benign.
+# WinAPI functions frequently seen in malicious PE imports (process
+# injection, anti-debugging, persistence, C2). Unchanged from legacy_v1.
+SUSPICIOUS_IMPORT_FUNCTIONS = {
+    "virtualalloc", "virtualallocex", "virtualprotect", "virtualprotectex",
+    "writeprocessmemory", "readprocessmemory", "createremotethread",
+    "createremotethreadex", "ntunmapviewofsection", "zwunmapviewofsection",
+    "queueuserapc", "setwindowshookexa", "setwindowshookexw",
+    "isdebuggerpresent", "checkremotedebuggerpresent", "ntqueryinformationprocess",
+    "outputdebugstringa", "getprocaddress", "loadlibrarya", "loadlibraryw",
+    "loadlibraryexa", "loadlibraryexw", "winexec", "shellexecutea", "shellexecutew",
+    "urldownloadtofilea", "urldownloadtofilew", "internetopena", "internetopenurla",
+    "internetreadfile", "httpsendrequesta", "httpsendrequestw", "createprocessa",
+    "createprocessw", "getasynckeystate", "setfileattributesa", "setfileattributesw",
+    "cryptencrypt", "cryptdecrypt", "adjusttokenprivileges", "openprocesstoken",
+    "resumethread", "suspendthread", "regsetvalueexa", "regsetvalueexw",
+    "regcreatekeyexa", "regcreatekeyexw", "findfirstfilea", "findnextfilea",
+    "deletefilea", "deletefilew",
+}
+
+# A "string" is 5+ consecutive printable ASCII characters, matching
+# EMBER's own definition so training (from EMBER JSON) and inference
+# (from a live uploaded file) count strings identically.
+MIN_STRING_LENGTH = 5
+
+# Identifier and label columns.
+ID_COLUMNS = ["Name"]  # holds each sample's SHA-256 hash (from EMBER) or a filename
 LABEL_COLUMN = "Malware"
 
-# 1 = malicious, 0 = benign. Confirmed against real rows: VirusShare-hash
-# rows are all 1, known-legitimate files (winhttp.dll, ldifde.exe) are all 0.
+# 1 = malicious, 0 = benign. Matches EMBER's own "label" convention
+# (confirmed directly against the raw EMBER JSON) and legacy_v1's.
 MALICIOUS_LABEL = 1
 BENIGN_LABEL = 0
 
-# Fixed seed so that every rerun of the code produces the same output and splits.
+# Fixed seed so every rerun of the code produces the same output and splits.
 RANDOM_STATE = 42
-
-# Data preprocessing process (calculating variance) revealed that 7 columns have zero variance
-# across all rows. These columns are likely to be a dataset error and are dropped to ensure that
-# a real file's genuine non-zero value is not mistaken for an anomaly.
-DROPPED_FEATURES = [
-    "SectionMaxEntropy", "SectionMaxRawsize", "SectionMaxVirtualsize",
-    "SectionMinPhysical", "SectionMinVirtual", "SectionMinPointerData", "SectionMainChar",
-]
-
-# Behavioural features excludes the raw header fields and characteristics of DLLs and EXE files, as
-# they reflect the type of file instead of what the file actually does. This allows the model to
-# judge the malware behaviour without any influence from the file type, avoiding shortcuts or
-# inaccurate signals.
-BEHAVIORAL_FEATURES = [f for f in ORDER_OF_FEATURES[52:] if f not in DROPPED_FEATURES]
-
-# To streamline behavioural features even more, CORE_TRAITS drops the
-# directory fields since they correlate with DLL/EXE structure, not actual
-# malware behaviour. Keeps only traits relevant to malicious behaviour including:
-# suspicious imports, odd section naming, and section entropy/size.
-CORE_TRAITS = [f for f in [
-    "SuspiciousImportFunctions", "SuspiciousNameSection", "SectionsLength",
-    "SectionMinEntropy", "SectionMaxEntropy", "SectionMinRawsize", "SectionMaxRawsize",
-    "SectionMinVirtualsize", "SectionMaxVirtualsize", "SectionMaxPhysical",
-    "SectionMinPhysical", "SectionMaxVirtual", "SectionMinVirtual",
-    "SectionMaxPointerData", "SectionMinPointerData", "SectionMaxChar", "SectionMainChar",
-] if f not in DROPPED_FEATURES]
-
-# Raw header fields only, no derived features at all. Allows us to check if a
-# problem (e.g. false positives) comes from the derived features, or would
-# happen anyway even without them.
-# e_magic is a PE file header and signature of Windows executable files as a number ("MZ").
-# Dropped as it does not tell us any meaningful information about whether a file is malicious.
-RAW_HEADER_FEATURES = [f for f in ORDER_OF_FEATURES[:52] if f != "e_magic"]

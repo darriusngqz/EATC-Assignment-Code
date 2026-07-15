@@ -2,6 +2,10 @@
 explains a prediction after the model already made it, like a tug-of-war:
 each feature value pulls the verdict toward malicious or toward benign.
 
+Unchanged from legacy_v1: this logic doesn't depend on which specific
+features are in play, only on feature_order having the right length, so
+it works unmodified with the new 20-feature set.
+
 Label convention: Malware == 1 malicious, 0 benign (see constants.py).
 shap_values[-1] is the SHAP array for class 1 (malicious): positive pushes
 toward malicious, negative pushes toward benign.
@@ -42,8 +46,8 @@ def explain_prediction(explainer, pipeline, raw_row, feature_names, n=8):
 
 
 # Run once, offline, to sanity-check the model isn't relying on a
-# shortcut feature (e.g. TimeDateStamp, which reflects when a sample was
-# compiled, not malware behaviour, and shouldn't dominate).
+# shortcut feature (e.g. FileSize, which can correlate with installer vs
+# utility rather than malware behaviour, and shouldn't dominate).
 def global_feature_importance(explainer, X_sample, feature_names, n=15):
     shap_values = explainer.shap_values(X_sample)
     if isinstance(shap_values, list):
