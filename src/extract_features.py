@@ -44,8 +44,8 @@ def _section_name(section):
 
 
 # Walks every section and computes entropy/size stats plus a count of
-# unrecognised section names. Same core signal as legacy_v1, packed or
-# obfuscated code tends to show unusually high section entropy.
+# unrecognised section names. Packed or obfuscated code tends to show
+# unusually high section entropy.
 def _section_derived_fields(pe):
     sections = list(getattr(pe, "sections", []))
     entropies, raw_sizes, virt_sizes = [], [], []
@@ -76,10 +76,10 @@ def _section_derived_fields(pe):
 
 
 # Counts imported DLLs, total imported functions, and how many imported
-# function names match SUSPICIOUS_IMPORT_FUNCTIONS. Unlike legacy_v1, also
-# reports the raw import volume (NumberOfImportedFunctions), a file with
-# almost no imports at all is itself a signal (common in packed malware
-# that resolves everything dynamically at runtime instead).
+# function names match SUSPICIOUS_IMPORT_FUNCTIONS. Also reports the raw
+# import volume (NumberOfImportedFunctions): a file with almost no imports
+# at all is itself a signal, common in packed malware that resolves
+# everything dynamically at runtime instead.
 def _import_derived_fields(pe):
     if not hasattr(pe, "DIRECTORY_ENTRY_IMPORT"):
         return {

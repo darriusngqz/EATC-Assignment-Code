@@ -1,12 +1,10 @@
-"""Unit tests for src/extract_features.py (v2, 20-feature schema).
+"""Unit tests for src/extract_features.py (20-feature schema).
 
 Deliberately avoid needing the pefile library or a real PE file for most
 tests: the private helper functions are tested directly against small
 hand-built fake objects that expose only the attributes each one reads.
 Keeps these fast, self-contained, and runnable in any environment,
-including CI without pefile installed. Mirrors legacy_v1/tests' approach,
-adapted to the new function names and 20-feature schema (see
-src/constants.py for why the schema changed).
+including CI without pefile installed.
 """
 import pytest
 

@@ -1,4 +1,4 @@
-"""Windows PE file malware checker - Streamlit app (v2).
+"""Windows PE file malware checker - Streamlit application.
 
 Security boundary: only ever parses a file's static header structure via
 pefile. Never saves an upload to an executable location, never calls
@@ -7,13 +7,8 @@ header parsing. See src/extract_features.py.
 
 Label convention: predicts P(malicious). Malware == 1 malicious, 0 benign.
 
-v2 vs legacy_v1/app.py: trained on EMBER2018 (800,000 real-world files,
-see notebooks/01-02) instead of the original ~19,600-row academic CSV, and
-uses 20 features instead of 10 (src/constants.py). Deliberately does NOT
-include the NSRL/VirusTotal hash-whitelisting layer that legacy_v1/app.py
-has: that layer was a mitigation for v1's confirmed ~90% real-world false
-positive rate. Whether v2 needs it depends on notebooks/07's real-world
-scan result, add it back only if that shows the same problem persists.
+Trained on EMBER2018 (800,000 real-world files, see notebooks/01-02) using
+the 20-feature schema defined in src/constants.py.
 
 Run locally with: streamlit run app.py
 """
@@ -42,8 +37,8 @@ MODEL_PATH = os.path.join(os.path.dirname(__file__), "models", "classical_pipeli
 DEMO_DATA_PATH = os.path.join(os.path.dirname(__file__), "data", "demo_sample_v2.csv")
 DEMO_SAMPLE_SIZE = 25
 
-# Standard 0.5 cutoff, matches legacy_v1's convention. Real-world reliability
-# is measured and reported honestly in notebooks/07_real_world_validation.ipynb.
+# Standard 0.5 probability cutoff. Real-world reliability is measured and
+# reported in notebooks/07_real_world_validation.ipynb.
 MALICIOUS_THRESHOLD = 0.5
 
 
@@ -155,10 +150,9 @@ def main():
         # for a live demo without needing to source an executable yourself.
         st.write(
             f"{DEMO_SAMPLE_SIZE} real files randomly drawn from EMBER2018's held-out "
-            "test set (identified by SHA-256 hash, not filename, EMBER does not "
-            "ship original filenames). Unlike legacy_v1's demo file, these rows "
-            "have a genuine ground-truth label attached, so the verdict below can "
-            "be checked directly against it."
+            "test set (identified by SHA-256 hash, not filename; EMBER does not "
+            "ship original filenames). Each row has a genuine ground-truth label "
+            "attached, so the verdict below can be checked directly against it."
         )
         demo = load_demo_sample()
         if demo is None:

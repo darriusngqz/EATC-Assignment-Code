@@ -1,10 +1,9 @@
 """SHAP-based explainability for the deployed classical Pipeline. SHAP
-explains a prediction after the model already made it, like a tug-of-war:
-each feature value pulls the verdict toward malicious or toward benign.
+explains a prediction after the model has already made it: each feature
+value pulls the predicted probability toward malicious or toward benign.
 
-Unchanged from legacy_v1: this logic doesn't depend on which specific
-features are in play, only on feature_order having the right length, so
-it works unmodified with the new 20-feature set.
+This logic is feature-set agnostic: it depends only on feature_order
+having the correct length, not on which specific features are present.
 
 Label convention: Malware == 1 malicious, 0 benign (see constants.py).
 shap_values[-1] is the SHAP array for class 1 (malicious): positive pushes

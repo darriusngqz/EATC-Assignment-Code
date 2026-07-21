@@ -1,10 +1,9 @@
-"""Tests for the trained Pipeline's prediction interface (v2, 20 features).
+"""Tests for the trained Pipeline's prediction interface (20 features).
 
-Need scikit-learn installed (pip install -r requirements-dev.txt). Train a
-tiny throwaway pipeline on a handful of synthetic rows, do not load the
+Need scikit-learn installed (pip install -r requirements-dev.txt). Trains a
+tiny throwaway pipeline on a handful of synthetic rows; does not load the
 real 800,000-row dataset or the saved production model, so these run in
-under a second and are safe to run on every commit. Mirrors legacy_v1's
-approach unchanged in concept, just against the new 20-feature ORDER_OF_FEATURES.
+under a second and are safe to run on every commit.
 """
 import numpy as np
 import pytest
